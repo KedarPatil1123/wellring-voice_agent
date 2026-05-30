@@ -2,3 +2,12 @@ venv/
 __pycache__/ 
 *.pyc 
 .env 
+*.wav 
+*.m4a 
+*.mp3 
+*.onnx 
+*.onnx.json 
+*.onnx 
+*.onnx.json 
+*.wav 
+*.onnx 
