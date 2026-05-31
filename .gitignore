@@ -1,4 +1,11 @@
-venv/ 
-__pycache__/ 
-*.pyc 
-.env 
+venv/
+__pycache__/
+*.pyc
+.env
+*.wav
+*.m4a
+*.mp3
+*.onnx
+*.onnx.json
+audios/
+response.wav
