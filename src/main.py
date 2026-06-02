@@ -16,15 +16,23 @@ Interactive docs:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 import datetime
 
 from src.scoring_engine import calculate_score, determine_action
+from src.database import init_db, log_interaction
+from src.notifications import trigger_alerts_if_needed
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 app = FastAPI(
     title="WellRing Health Risk API",
@@ -33,6 +41,7 @@ app = FastAPI(
         "returns a risk score, risk level, and escalation action plan."
     ),
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -157,23 +166,33 @@ def assess(payload: AssessRequest):
 
     alert_result = determine_action(score_result["score"])
 
-    return AssessResponse(
+    response_data = {
         # score block
-        score=score_result["score"],
-        base_score=score_result["base_score"],
-        confidence=score_result["confidence"],
+        "score": score_result["score"],
+        "base_score": score_result["base_score"],
+        "confidence": score_result["confidence"],
         # classification block
-        risk_level=score_result["risk_level"],
-        category=score_result["category"],
-        symptoms=score_result["symptoms"],
-        severity=score_result["severity"],
+        "risk_level": score_result["risk_level"],
+        "category": score_result["category"],
+        "symptoms": score_result["symptoms"],
+        "severity": score_result["severity"],
         # escalation block
-        action=alert_result["action"],
-        message=alert_result["message"],
-        steps=alert_result["steps"],
+        "action": alert_result["action"],
+        "message": alert_result["message"],
+        "steps": alert_result["steps"],
         # meta
-        timestamp=datetime.datetime.utcnow().isoformat() + "Z",
-    )
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    
+    # Log interaction to database
+    log_data = response_data.copy()
+    log_data["intent"] = payload.intent
+    interaction_id = log_interaction(log_data)
+    
+    # Trigger alerts if necessary
+    trigger_alerts_if_needed(interaction_id, response_data["risk_level"], response_data["message"])
+
+    return AssessResponse(**response_data)
 
 
 @app.get("/symptoms", tags=["Reference"])

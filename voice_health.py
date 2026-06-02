@@ -5,6 +5,8 @@ import sounddevice as sd
 import soundfile as sf
 import time
 import os
+import json
+import httpx
 from piper import PiperVoice
 
 # Settings
@@ -79,7 +81,39 @@ def speak(text):
 
 def ask_llama(user_text):
     """Send message to Llama 3 and get response"""
-    conversation.append({"role": "user", "content": user_text})
+    # 1. Extract JSON
+    extract_msgs = [
+        {"role": "system", "content": """Extract health symptoms from the user's input.
+Output ONLY JSON matching this format:
+{
+  "intent": "health_issue" or "general",
+  "symptoms": ["chest_pain", "breathing_problem", "dizziness", "fever", "medicine_missed", "fall_detected", "unconscious", "stroke_symptoms"],
+  "severity": "low", "medium", "high", or "critical",
+  "confidence": 0.95
+}"""},
+        {"role": "user", "content": user_text}
+    ]
+    
+    print("Assessing risk...")
+    extraction = ollama.chat(model="llama3", messages=extract_msgs, format="json")
+    try:
+        parsed = json.loads(extraction['message']['content'])
+        print(f"[LLM Extracted] {parsed}")
+        
+        # 2. Call FastAPI backend
+        r = httpx.post("http://localhost:8000/assess", json=parsed, timeout=5.0)
+        if r.status_code == 200:
+            assess_data = r.json()
+            context_for_llama = f"\n[SYSTEM: User Risk Level is {assess_data['risk_level']}. Action: {assess_data['action']}. Steps: {', '.join(assess_data['steps'])}]"
+        else:
+            print(f"[API Error] {r.status_code}")
+            context_for_llama = ""
+    except Exception as e:
+        print(f"[Assessment Error - is the server running?] {e}")
+        context_for_llama = ""
+
+    # 3. Generate conversational response
+    conversation.append({"role": "user", "content": user_text + context_for_llama})
     
     response = ollama.chat(
         model="llama3",
