@@ -2,7 +2,7 @@ name: Voice Agent CI
 
 on:
   push:
-    branches: [ main, feature/* ]
+    branches: [ main, feature/*, atharva-* ]
   pull_request:
     branches: [ main ]
 
@@ -22,9 +22,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ollama openai-whisper fastapi uvicorn
+        pip install fastapi uvicorn pydantic httpx
 
-    - name: Check Python files for errors
+    - name: Check Python files for syntax errors
       run: |
         find . -name "*.py" -not -path "./venv/*" | xargs python -m py_compile
-        echo "No  Errors"
+        echo "✅ No syntax errors"
+
+    - name: Run scoring engine tests
+      run: |
+        python src/scoring_engine/test_cases.py

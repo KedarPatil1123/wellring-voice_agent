@@ -75,7 +75,7 @@ def speak(text):
     """Convert text to speech using Piper"""
     with wave.open("audios/response.wav", "wb") as wav_file:
         voice_en.synthesize_wav(text, wav_file)
-    os.system("start audios\\response.wav")
+    os.system("aplay audios/response.wav")
 
 def ask_llama(user_text):
     """Send message to Llama 3 and get response"""
