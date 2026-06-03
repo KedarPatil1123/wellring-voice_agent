@@ -22,7 +22,7 @@ from typing import List, Optional
 import datetime
 
 from src.scoring_engine import calculate_score, determine_action
-from src.database import init_db, log_interaction
+from src.database import init_db, log_interaction, get_symptom_repeat_count
 from src.notifications import trigger_alerts_if_needed
 
 # ---------------------------------------------------------------------------
@@ -118,6 +118,9 @@ class AssessResponse(BaseModel):
     message: str       = Field(..., description="Human-readable summary of the action")
     steps: List[str]   = Field(..., description="Ordered list of escalation steps")
 
+    # --- Explainability ---
+    breakdown: List[str] = Field(..., description="Per-component score breakdown for explainability")
+
     # --- Meta ---
     timestamp: str     = Field(..., description="ISO 8601 UTC timestamp of the assessment")
 
@@ -156,15 +159,22 @@ def assess(payload: AssessRequest):
     4. Response is spoken back to the user and logged
     """
     try:
+        # Build history counts for each symptom from the last 3 days
+        history_counts = {
+            s: get_symptom_repeat_count(s, days=3)
+            for s in payload.symptoms
+        }
+
         score_result = calculate_score(
             symptoms=payload.symptoms,
             severity=payload.severity,
             confidence=payload.confidence,
+            history_counts=history_counts,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    alert_result = determine_action(score_result["score"])
+    alert_result = determine_action(score_result["score"], payload.confidence)
 
     response_data = {
         # score block
@@ -180,6 +190,8 @@ def assess(payload: AssessRequest):
         "action": alert_result["action"],
         "message": alert_result["message"],
         "steps": alert_result["steps"],
+        # explainability block
+        "breakdown": score_result["breakdown"],
         # meta
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
     }

@@ -84,6 +84,41 @@ def log_interaction(data: Dict[str, Any], db_path: str = DB_PATH) -> int:
     
     return interaction_id
 
+def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: str = DB_PATH) -> int:
+    """
+    Returns how many times a symptom was logged in the last `days` days.
+
+    Uses SQLite's json_each() to search inside the stored JSON symptom arrays.
+    The scoring engine uses this count to apply the history escalation multiplier:
+        history_multiplier = 1.0 + (repeat_count * 0.2), capped at 2.0
+
+    Args:
+        symptom: Symptom key to look up (e.g. "dizziness").
+        days:    Look-back window in days. Default 3.
+        db_path: Path to the SQLite database.
+
+    Returns:
+        Integer count of how many past interactions contained this symptom
+        within the look-back window (0 = first occurrence).
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(DISTINCT i.id)
+        FROM   interactions i,
+               json_each(i.symptoms) je
+        WHERE  je.value = ?
+          AND  i.timestamp >= datetime('now', ? || ' days')
+        """,
+        (symptom, f"-{days}"),
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
 def log_alert(interaction_id: int, timestamp: str, risk_level: str, notification_type: str, status: str, db_path: str = DB_PATH):
     """Log a sent alert (e.g., SMS, Email)."""
     conn = sqlite3.connect(db_path)
