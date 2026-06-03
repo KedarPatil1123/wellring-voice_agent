@@ -96,21 +96,46 @@ Output ONLY JSON matching this format:
     
     print("Assessing risk...")
     extraction = ollama.chat(model="llama3", messages=extract_msgs, format="json")
+    context_for_llama = ""
     try:
         parsed = json.loads(extraction['message']['content'])
         print(f"[LLM Extracted] {parsed}")
-        
-        # 2. Call FastAPI backend
-        r = httpx.post("http://localhost:8000/assess", json=parsed, timeout=5.0)
-        if r.status_code == 200:
-            assess_data = r.json()
-            context_for_llama = f"\n[SYSTEM: User Risk Level is {assess_data['risk_level']}. Action: {assess_data['action']}. Steps: {', '.join(assess_data['steps'])}]"
+
+        # Only call the backend when it's a real health issue with required fields
+        intent = parsed.get("intent", "general")
+        severity = parsed.get("severity", "").lower().strip()
+        symptoms = parsed.get("symptoms", [])
+        confidence = parsed.get("confidence", 1.0)
+
+        valid_severities = {"low", "medium", "high", "critical"}
+        has_required = (
+            intent == "health_issue"
+            and severity in valid_severities
+            and isinstance(symptoms, list)
+        )
+
+        if has_required:
+            # 2. Call FastAPI backend (with normalised severity)
+            payload = {
+                "intent": intent,
+                "symptoms": symptoms,
+                "severity": severity,
+                "confidence": confidence,
+            }
+            r = httpx.post("http://localhost:8000/assess", json=payload, timeout=5.0)
+            if r.status_code == 200:
+                assess_data = r.json()
+                context_for_llama = (
+                    f"\n[SYSTEM: User Risk Level is {assess_data['risk_level']}. "
+                    f"Action: {assess_data['action']}. "
+                    f"Steps: {', '.join(assess_data['steps'])}]"
+                )
+            else:
+                print(f"[API Error] {r.status_code}: {r.text}")
         else:
-            print(f"[API Error] {r.status_code}")
-            context_for_llama = ""
+            print("[Skipping /assess — general conversation or incomplete extraction]")
     except Exception as e:
         print(f"[Assessment Error - is the server running?] {e}")
-        context_for_llama = ""
 
     # 3. Generate conversational response
     conversation.append({"role": "user", "content": user_text + context_for_llama})
@@ -124,31 +149,32 @@ Output ONLY JSON matching this format:
     conversation.append({"role": "assistant", "content": reply})
     return reply
 
-print("Voice Health Assistant Ready!")
-print("Press ENTER to speak or type 'quit' to exit\n")
+if __name__ == "__main__":
+    print("Voice Health Assistant Ready!")
+    print("Press ENTER to speak or type 'quit' to exit\n")
 
-while True:
-    user_input = input("Press ENTER to speak (or type 'quit'): ")
-    
-    if user_input.lower() == "quit":
-        print("Goodbye! Stay safe!")
-        break
-    
-    # Record and transcribe
-    filename = record_audio()
-    user_text = transcribe(filename)
-    print(f"You said: {user_text}")
-    
-    counter += 1
-    
-    # Don't call Llama if nothing was heard
-    if not user_text:
-        print("Didn't catch that! Please try again.")
-        continue
-    
-    # Get AI response
-    reply = ask_llama(user_text)
-    print(f"\nAssistant: {reply}\n")
-    
-    # Speak the response
-    speak(reply)
+    while True:
+        user_input = input("Press ENTER to speak (or type 'quit'): ")
+        
+        if user_input.lower() == "quit":
+            print("Goodbye! Stay safe!")
+            break
+        
+        # Record and transcribe
+        filename = record_audio()
+        user_text = transcribe(filename)
+        print(f"You said: {user_text}")
+        
+        counter += 1
+        
+        # Don't call Llama if nothing was heard
+        if not user_text:
+            print("Didn't catch that! Please try again.")
+            continue
+        
+        # Get AI response
+        reply = ask_llama(user_text)
+        print(f"\nAssistant: {reply}\n")
+        
+        # Speak the response
+        speak(reply)
