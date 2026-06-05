@@ -1,120 +1,67 @@
-import ollama
-import whisper
-import wave
-import sounddevice as sd
-import soundfile as sf
-import time
+"""
+voice_health.py
+===============
+WellRing Voice Health Assistant — entry point.
+
+Starts the interactive voice agent loop.
+
+Usage:
+    python voice_health.py
+
+This is a thin wrapper around :func:`orchestrator.run_loop`.
+All pipeline logic lives in ``src/``:
+
+    src/orchestrator.py          ← run_once() / run_loop()
+    src/whisper_layer/           ← Stage 1: Record + Transcribe
+    src/llama/                   ← Stage 2: Classify
+    src/pipeline/                ← Stage 3: Validate → Route → Log
+    src/scoring_engine/          ← Stage 4: Score + Escalate
+    src/tts/                     ← Stage 5: Synthesise + Speak
+
+For the FastAPI server instead:
+    uvicorn src.main:app --reload --port 8000
+"""
+
+from __future__ import annotations
+
+import logging
 import os
-from piper import PiperVoice
+import sys
 
-# Settings
-DURATION = 8
-SAMPLE_RATE = 16000
+# ---------------------------------------------------------------------------
+# Ensure src/ is importable when running from project root
+# ---------------------------------------------------------------------------
+_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
-# Counter for recordings
-counter = 1
+# ---------------------------------------------------------------------------
+# Configure logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 
-# Load all models
-print("Loading Whisper...")
-whisper_model = whisper.load_model("base")
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
-print("Loading English voice...")
-voice_en = PiperVoice.load("en_US-ryan-high.onnx")
+def main() -> None:
+    """Start the WellRing interactive voice loop."""
+    try:
+        from orchestrator import run_loop
+    except ImportError as exc:
+        print(
+            f"\n❌  Could not import the orchestrator: {exc}\n"
+            "    Make sure you are running from the project root and that\n"
+            "    all dependencies are installed:  pip install -r requirements.txt\n"
+        )
+        sys.exit(1)
 
-print("\nAll models loaded! Ready!\n")
+    run_loop()
 
-# Health assistant system prompt
-system_prompt = """You are a health assistant for elderly people.
 
-STRICT RULES:
-1. If the user mentions chest pain, heart, breathing, fallen, unconscious, bleeding, stroke - start with: ALERT - Please call emergency services immediately on 112
-2. After alert, ask follow up questions calmly
-3. Always speak in very simple short sentences
-4. Never use difficult medical words
-5. Be warm and caring like a family member"""
-
-# Conversation history
-conversation = [{"role": "system", "content": system_prompt}]
-
-def record_audio():
-    """Record audio from microphone"""
-    global counter
-    
-    print("3...")
-    time.sleep(1)
-    print("2...")
-    time.sleep(1)
-    print("1...")
-    time.sleep(1)
-    print("SPEAK NOW! (8 seconds)")
-    
-    recording = sd.rec(
-        int(DURATION * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype='int16'
-    )
-    sd.wait()
-    
-    filename = f"audios/recording{counter}.wav"
-    sf.write(filename, recording, SAMPLE_RATE)
-    print("Processing...")
-    return filename
-
-def transcribe(filename):
-    """Convert audio to text using Whisper"""
-    result = whisper_model.transcribe(
-        filename,
-        language="en",
-        fp16=False,
-        temperature=0
-    )
-    return result['text'].strip()
-
-def speak(text):
-    """Convert text to speech using Piper"""
-    with wave.open("audios/response.wav", "wb") as wav_file:
-        voice_en.synthesize_wav(text, wav_file)
-    os.system("start audios\\response.wav")
-
-def ask_llama(user_text):
-    """Send message to Llama 3 and get response"""
-    conversation.append({"role": "user", "content": user_text})
-    
-    response = ollama.chat(
-        model="llama3",
-        messages=conversation
-    )
-    
-    reply = response['message']['content']
-    conversation.append({"role": "assistant", "content": reply})
-    return reply
-
-print("Voice Health Assistant Ready!")
-print("Press ENTER to speak or type 'quit' to exit\n")
-
-while True:
-    user_input = input("Press ENTER to speak (or type 'quit'): ")
-    
-    if user_input.lower() == "quit":
-        print("Goodbye! Stay safe!")
-        break
-    
-    # Record and transcribe
-    filename = record_audio()
-    user_text = transcribe(filename)
-    print(f"You said: {user_text}")
-    
-    counter += 1
-    
-    # Don't call Llama if nothing was heard
-    if not user_text:
-        print("Didn't catch that! Please try again.")
-        continue
-    
-    # Get AI response
-    reply = ask_llama(user_text)
-    print(f"\nAssistant: {reply}\n")
-    
-    # Speak the response
-    speak(reply)
+if __name__ == "__main__":
+    main()
