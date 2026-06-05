@@ -255,3 +255,96 @@ def list_risk_levels():
             ]
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# Dashboard Endpoints
+# ---------------------------------------------------------------------------
+
+import sqlite3
+import json
+from src.database import _resolve_db_path
+
+@app.get("/assessments", tags=["Dashboard"])
+def get_assessments(limit: int = 50, risk_level: Optional[str] = None):
+    """Returns recent assessments (interactions) for the dashboard feed."""
+    db_path = _resolve_db_path(None)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Check if table exists first
+    cursor.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='interactions'
+    """)
+    if not cursor.fetchone():
+        conn.close()
+        return []
+    
+    query = "SELECT * FROM interactions ORDER BY timestamp DESC LIMIT ?"
+    params = [limit]
+    
+    if risk_level:
+        query = "SELECT * FROM interactions WHERE risk_level = ? ORDER BY timestamp DESC LIMIT ?"
+        params = [risk_level.upper(), limit]
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        r_dict = dict(row)
+        try:
+            r_dict["symptoms"] = json.loads(r_dict["symptoms"])
+        except Exception:
+            pass
+        result.append(r_dict)
+        
+    return result
+
+
+@app.get("/assessments/stats", tags=["Dashboard"])
+def get_assessment_stats():
+    """Returns counts for dashboard cards."""
+    db_path = _resolve_db_path(None)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_today,
+            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low,
+            SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium,
+            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high,
+            SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical
+        FROM interactions 
+        WHERE date(timestamp) = date('now', 'localtime')
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    
+    return {
+        "total_today": row[0] or 0,
+        "low": row[1] or 0,
+        "medium": row[2] or 0,
+        "high": row[3] or 0,
+        "critical": row[4] or 0
+    }
+
+
+@app.get("/patients", tags=["Dashboard"])
+def get_patients():
+    """Hardcoded for demo — replace with real DB later."""
+    return [
+        {
+            "id": 1,
+            "name": "Mr. Sharma",
+            "age": 72,
+            "conditions": ["Hypertension", "Diabetes"],
+            "emergency_contact": "+91-9876543210",
+            "language": "English",
+            "status": "active"
+        }
+    ]

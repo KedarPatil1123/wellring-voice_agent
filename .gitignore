@@ -7,4 +7,5 @@ __pycache__/
 *.mp3
 *.onnx
 *.onnx.json
-audios/
+audios/wellring.db
+ollama.log

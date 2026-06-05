@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: wellring-backend
+    env: docker
+    region: ohio
+    plan: free
+    branch: atharva-voice-work
+    envVars:
+      - key: USE_SUPABASE
+        value: false
+      - key: USE_TWILIO
+        value: false
+      - key: SUPABASE_URL
+        value: ""
+      - key: SUPABASE_KEY
+        value: ""
+      - key: TWILIO_ACCOUNT_SID
+        value: ""
+      - key: TWILIO_AUTH_TOKEN
+        value: ""
+      - key: TWILIO_FROM_PHONE
+        value: ""
+      - key: CAREGIVER_PHONE
+        value: ""
