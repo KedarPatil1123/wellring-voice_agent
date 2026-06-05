@@ -13,11 +13,17 @@ An AI-powered voice health assistant for elderly people that listens, understand
 
 wellring-voice_agent/
 ├── voice_health.py        ← Main voice agent
-├── tests/
-│   ├── test_llama.py      ← Tests Llama 3
-│   ├── test_mic.py        ← Tests microphone
-│   ├── test_mic_whisper.py← Tests Whisper STT
-│   └── test_piper.py      ← Tests Piper TTS
+├── src/                   ← FastAPI Backend & Scoring Engine
+│   ├── main.py            ← FastAPI entrypoint (`/assess`)
+│   ├── database.py        ← SQLite / Supabase integrations
+│   ├── notifications.py   ← Twilio SMS alerts
+│   ├── users.py           ← User profile system
+│   └── scoring_engine/    ← Risk calculation logic
+├── docs/                  ← Documentation
+│   ├── api.md
+│   ├── architecture.md
+│   └── database_schema.md
+├── tests/                 ← Pytest suite
 ├── audios/                ← Recorded audio files
 ├── .github/workflows/     ← CI/CD pipeline
 ├── requirements.txt       ← Python dependencies
@@ -43,8 +49,19 @@ wellring-voice_agent/
 - Download `en_US-ryan-high.onnx` and `en_US-ryan-high.onnx.json`
 - Place both files in the project root folder
 
+### Run the FastAPI Backend:
+
+Start the scoring engine API (required for the voice agent to work):
+```bash
+uvicorn src.main:app --reload --port 8000
+```
+
 ### Run the voice agent:
 
+In a separate terminal:
+```bash
+python voice_health.py
+```
 Press ENTER to speak. The agent will listen, respond and speak back.
 
 ## Emergency Detection
