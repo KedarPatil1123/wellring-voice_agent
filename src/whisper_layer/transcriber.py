@@ -158,6 +158,13 @@ def transcribe(
             fp16=FP16,
             temperature=TEMPERATURE,
         )
+    except FileNotFoundError as exc:
+        return TranscribeResult(
+            success=False,
+            file_path=file_path,
+            model_size=model_size,
+            error=f"FFmpeg not found. Please install ffmpeg and add it to your PATH to use Whisper. ({exc})",
+        )
     except Exception as exc:  # noqa: BLE001
         return TranscribeResult(
             success=False,
@@ -165,6 +172,7 @@ def transcribe(
             model_size=model_size,
             error=f"Whisper transcription error: {exc}",
         )
+
 
     elapsed = round(time.time() - t0, 2)
     text    = raw.get("text", "").strip()
