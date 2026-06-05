@@ -11,8 +11,9 @@ Set USE_TWILIO=true to enable real SMS dispatch.
 import logging
 import os
 import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from src.database import log_alert
+from src.users import get_caregiver_phone
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ CAREGIVER_PHONE     = os.environ.get("CAREGIVER_PHONE",     "+0987654321")
 USE_TWILIO          = os.environ.get("USE_TWILIO",           "false").lower() == "true"
 
 
-def send_sms_alert(interaction_id: int, risk_level: str, message: str) -> bool:
+def send_sms_alert(interaction_id: int, risk_level: str, message: str, to_phone: str) -> bool:
     """
     Send an SMS alert to the caregiver.
     Uses real Twilio if USE_TWILIO=true, otherwise logs a mock.
@@ -38,14 +39,14 @@ def send_sms_alert(interaction_id: int, risk_level: str, message: str) -> bool:
             client.messages.create(
                 body=f"[WellRing ALERT] {risk_level}: {message}",
                 from_=TWILIO_FROM_PHONE,
-                to=CAREGIVER_PHONE,
+                to=to_phone,
             )
-            logger.info(f"[SMS SENT to {CAREGIVER_PHONE}] {risk_level}: {message}")
+            logger.info(f"[SMS SENT to {to_phone}] {risk_level}: {message}")
         except Exception as e:
             logger.error(f"[SMS FAILED] {e}")
             return False
     else:
-        logger.info(f"🚨 [SMS MOCK to {CAREGIVER_PHONE}] {risk_level}: {message}")
+        logger.info(f"🚨 [SMS MOCK to {to_phone}] {risk_level}: {message}")
 
     log_alert(
         interaction_id=interaction_id,
@@ -57,10 +58,11 @@ def send_sms_alert(interaction_id: int, risk_level: str, message: str) -> bool:
     return True
 
 
-def trigger_alerts_if_needed(interaction_id: int, risk_level: str, message: str):
+def trigger_alerts_if_needed(interaction_id: int, risk_level: str, message: str, user_id: Optional[str] = None):
     """
     Determines if an alert needs to be sent based on risk level.
-    Fires for HIGH and CRITICAL only.
+    Fires for HIGH and CRITICAL only. Routes to the user's caregiver.
     """
     if risk_level in ["HIGH", "CRITICAL"]:
-        send_sms_alert(interaction_id, risk_level, message)
+        phone = get_caregiver_phone(user_id, CAREGIVER_PHONE)
+        send_sms_alert(interaction_id, risk_level, message, to_phone=phone)

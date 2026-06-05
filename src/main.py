@@ -90,6 +90,7 @@ class AssessRequest(BaseModel):
         description="LLM confidence in its symptom extraction, range [0.0, 1.0]",
         examples=[0.95],
     )
+    user_id: Optional[str] = Field(None, description="UUID of the user (patient)")
 
     @field_validator("severity")
     @classmethod
@@ -203,10 +204,11 @@ def assess(payload: AssessRequest):
     # Log interaction to database
     log_data = response_data.copy()
     log_data["intent"] = payload.intent
+    log_data["user_id"] = payload.user_id
     interaction_id = log_interaction(log_data)
     
     # Trigger alerts if necessary
-    trigger_alerts_if_needed(interaction_id, response_data["risk_level"], response_data["message"])
+    trigger_alerts_if_needed(interaction_id, response_data["risk_level"], response_data["message"], payload.user_id)
 
     return AssessResponse(**response_data)
 

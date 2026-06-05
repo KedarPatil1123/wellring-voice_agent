@@ -56,7 +56,20 @@ def init_db(db_path: Optional[str] = None):
             risk_level TEXT NOT NULL,
             category TEXT NOT NULL,
             action TEXT NOT NULL,
-            message TEXT NOT NULL
+            message TEXT NOT NULL,
+            user_id TEXT
+        )
+    ''')
+    
+    # Users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            age INTEGER,
+            medical_conditions TEXT,
+            caregiver_name TEXT,
+            caregiver_phone TEXT
         )
     ''')
     
@@ -96,7 +109,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
                     "risk_level": data["risk_level"],
                     "category": data["category"],
                     "action": data["action"],
-                    "message": data["message"]
+                    "message": data["message"],
+                    "user_id": data.get("user_id")
                 }).execute()
                 if res.data and len(res.data) > 0:
                     return res.data[0]["id"]
@@ -111,8 +125,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     cursor.execute('''
         INSERT INTO interactions (
             timestamp, intent, symptoms, severity, confidence,
-            score, risk_level, category, action, message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            score, risk_level, category, action, message, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data["timestamp"],
         data.get("intent", ""),
@@ -123,7 +137,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
         data["risk_level"],
         data["category"],
         data["action"],
-        data["message"]
+        data["message"],
+        data.get("user_id")
     ))
     
     interaction_id = cursor.lastrowid
