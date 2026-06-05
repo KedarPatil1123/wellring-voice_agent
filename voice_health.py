@@ -95,7 +95,7 @@ Output ONLY JSON matching this format:
     ]
     
     print("Assessing risk...")
-    extraction = ollama.chat(model="llama3", messages=extract_msgs, format="json")
+    extraction = ollama.chat(model="llama3.2:1b", messages=extract_msgs, format="json")
     context_for_llama = ""
     try:
         parsed = json.loads(extraction['message']['content'])
@@ -141,7 +141,7 @@ Output ONLY JSON matching this format:
     conversation.append({"role": "user", "content": user_text + context_for_llama})
     
     response = ollama.chat(
-        model="llama3",
+        model="llama3.2:1b",
         messages=conversation
     )
     

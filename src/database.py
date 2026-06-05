@@ -8,13 +8,23 @@ Will be migrated to PostgreSQL for production.
 import sqlite3
 import json
 import logging
-from typing import Dict, Any
+import os
+from typing import Dict, Any, Optional
 
+# Default path — overridden by WELLRING_DB_PATH env var (used by tests and Supabase migration).
 DB_PATH = "wellring.db"
 logger = logging.getLogger(__name__)
 
-def init_db(db_path: str = DB_PATH):
+
+def _resolve_db_path(db_path: Optional[str]) -> str:
+    """Return the active DB path: explicit arg → env var → default."""
+    if db_path is not None:
+        return db_path
+    return os.environ.get("WELLRING_DB_PATH", DB_PATH)
+
+def init_db(db_path: Optional[str] = None):
     """Initialize the SQLite database schema."""
+    db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
@@ -52,11 +62,12 @@ def init_db(db_path: str = DB_PATH):
     conn.close()
     logger.info(f"Database initialized at {db_path}")
 
-def log_interaction(data: Dict[str, Any], db_path: str = DB_PATH) -> int:
+def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     """
     Log an assessment interaction to the database.
     Returns the inserted interaction ID.
     """
+    db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
@@ -84,7 +95,7 @@ def log_interaction(data: Dict[str, Any], db_path: str = DB_PATH) -> int:
     
     return interaction_id
 
-def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: str = DB_PATH) -> int:
+def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: Optional[str] = None) -> int:
     """
     Returns how many times a symptom was logged in the last `days` days.
 
@@ -95,12 +106,13 @@ def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: str = DB_PATH
     Args:
         symptom: Symptom key to look up (e.g. "dizziness").
         days:    Look-back window in days. Default 3.
-        db_path: Path to the SQLite database.
+        db_path: Path to the SQLite database (resolved from env if None).
 
     Returns:
         Integer count of how many past interactions contained this symptom
         within the look-back window (0 = first occurrence).
     """
+    db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -119,8 +131,9 @@ def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: str = DB_PATH
     return count
 
 
-def log_alert(interaction_id: int, timestamp: str, risk_level: str, notification_type: str, status: str, db_path: str = DB_PATH):
+def log_alert(interaction_id: int, timestamp: str, risk_level: str, notification_type: str, status: str, db_path: Optional[str] = None):
     """Log a sent alert (e.g., SMS, Email)."""
+    db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     

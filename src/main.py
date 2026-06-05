@@ -14,6 +14,10 @@ Interactive docs:
     http://localhost:8000/docs
 """
 
+# Load .env file before anything else reads os.environ
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
