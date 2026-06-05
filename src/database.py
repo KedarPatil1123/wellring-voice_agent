@@ -9,11 +9,26 @@ import sqlite3
 import json
 import logging
 import os
+import datetime
 from typing import Dict, Any, Optional
+
+try:
+    from supabase import create_client, Client
+except ImportError:
+    Client = Any
 
 # Default path — overridden by WELLRING_DB_PATH env var (used by tests and Supabase migration).
 DB_PATH = "wellring.db"
 logger = logging.getLogger(__name__)
+
+USE_SUPABASE = os.environ.get("USE_SUPABASE", "false").lower() == "true"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+def get_supabase() -> Optional['Client']:
+    if USE_SUPABASE and SUPABASE_URL and SUPABASE_KEY:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    return None
 
 
 def _resolve_db_path(db_path: Optional[str]) -> str:
@@ -67,6 +82,28 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     Log an assessment interaction to the database.
     Returns the inserted interaction ID.
     """
+    if USE_SUPABASE:
+        supabase = get_supabase()
+        if supabase:
+            try:
+                res = supabase.table("interactions").insert({
+                    "timestamp": data["timestamp"],
+                    "intent": data.get("intent", ""),
+                    "symptoms": data.get("symptoms", []),
+                    "severity": data.get("severity", ""),
+                    "confidence": data.get("confidence", 1.0),
+                    "score": data["score"],
+                    "risk_level": data["risk_level"],
+                    "category": data["category"],
+                    "action": data["action"],
+                    "message": data["message"]
+                }).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]["id"]
+                return -1
+            except Exception as e:
+                logger.error(f"Supabase insert failed: {e}. Falling back to SQLite.")
+
     db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -112,6 +149,24 @@ def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: Optional[str]
         Integer count of how many past interactions contained this symptom
         within the look-back window (0 = first occurrence).
     """
+    if USE_SUPABASE:
+        supabase = get_supabase()
+        if supabase:
+            try:
+                # Calculate the cutoff timestamp
+                cutoff_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat() + "Z"
+                
+                # PostgREST `cs` (contains) on JSONB array
+                res = supabase.table("interactions") \
+                    .select("id", count="exact") \
+                    .gte("timestamp", cutoff_date) \
+                    .contains("symptoms", [symptom]) \
+                    .execute()
+                
+                return res.count if res.count is not None else 0
+            except Exception as e:
+                logger.error(f"Supabase select failed: {e}. Falling back to SQLite.")
+
     db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -133,6 +188,21 @@ def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: Optional[str]
 
 def log_alert(interaction_id: int, timestamp: str, risk_level: str, notification_type: str, status: str, db_path: Optional[str] = None):
     """Log a sent alert (e.g., SMS, Email)."""
+    if USE_SUPABASE:
+        supabase = get_supabase()
+        if supabase:
+            try:
+                supabase.table("alerts_log").insert({
+                    "interaction_id": interaction_id,
+                    "timestamp": timestamp,
+                    "risk_level": risk_level,
+                    "notification_type": notification_type,
+                    "status": status
+                }).execute()
+                return
+            except Exception as e:
+                logger.error(f"Supabase alert log failed: {e}. Falling back to SQLite.")
+
     db_path = _resolve_db_path(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
