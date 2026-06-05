@@ -26,6 +26,9 @@ ACTION_FOLLOW_UP        = "follow_up_questions"
 ACTION_NOTIFY_CAREGIVER = "notify_caregiver"
 ACTION_EMERGENCY        = "notify_caregiver_and_emergency_services"
 
+# If the LLM is less than 40% confident, never escalate — ask first.
+LOW_CONFIDENCE_THRESHOLD = 0.4
+
 
 # ---------------------------------------------------------------------------
 # Escalation definitions per risk level
@@ -75,12 +78,17 @@ _ESCALATION: Dict[RiskLevel, Dict[str, Any]] = {
 }
 
 
-def determine_action(score: int) -> Dict[str, Any]:
+def determine_action(score: int, confidence: float = 1.0) -> Dict[str, Any]:
     """
     Determine the full escalation response for a given risk score.
 
+    If LLM confidence is below LOW_CONFIDENCE_THRESHOLD (0.4), the action is
+    always overridden to follow_up_questions regardless of the calculated score.
+    This prevents escalating on a very weak or ambiguous signal.
+
     Args:
-        score: The integer risk score returned by ``calculate_score``.
+        score:      The integer risk score returned by ``calculate_score``.
+        confidence: The LLM confidence value [0.0, 1.0]. Defaults to 1.0.
 
     Returns:
         A dict with the shape::
@@ -94,8 +102,26 @@ def determine_action(score: int) -> Dict[str, Any]:
             }
     """
     level: RiskLevel = get_risk_level(score)
-    escalation       = _ESCALATION[level]
 
+    # Low-confidence override: ask clarifying questions instead of acting
+    if confidence < LOW_CONFIDENCE_THRESHOLD:
+        return {
+            "action":     ACTION_FOLLOW_UP,
+            "risk_level": level.value,
+            "score":      score,
+            "message":    (
+                f"Low detection confidence ({confidence:.0%}). "
+                "Asking follow-up questions before escalating."
+            ),
+            "steps": [
+                "Ask: 'Can you describe your symptoms more clearly?'",
+                "Ask: 'How long have you been feeling this way?'",
+                "Ask: 'On a scale of 1–10, how severe is it?'",
+                "Re-assess after user clarification.",
+            ],
+        }
+
+    escalation = _ESCALATION[level]
     return {
         "action":     escalation["action"],
         "risk_level": level.value,
