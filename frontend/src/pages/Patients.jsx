@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Phone, Globe, Activity, X } from 'lucide-react';
+import { API_BASE } from '../config';
 
-const API_BASE = 'http://localhost:8000';
 
 export default function Patients() {
   const [patients, setPatients] = useState([]);

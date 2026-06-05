@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Search, Filter } from 'lucide-react';
 import { mockAssessments } from '../mockAssessments';
+import { API_BASE } from '../config';
 
-const API_BASE = 'http://localhost:8000';
 
 export default function History() {
   const [assessments, setAssessments] = useState(mockAssessments);

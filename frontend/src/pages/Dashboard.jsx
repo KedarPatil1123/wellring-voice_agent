@@ -4,8 +4,8 @@ import AlertCard from '../components/AlertCard';
 import Toast from '../components/Toast';
 import { mockAssessments } from '../mockAssessments';
 import { Mic, Activity, RefreshCw } from 'lucide-react';
+import { API_BASE } from '../config';
 
-const API_BASE = 'http://localhost:8000';
 
 export default function Dashboard() {
   const [isConnected, setIsConnected] = useState(false);
