@@ -25,28 +25,42 @@ TWILIO_AUTH_TOKEN   = os.environ.get("TWILIO_AUTH_TOKEN",   "mock_twilio_token")
 TWILIO_FROM_PHONE   = os.environ.get("TWILIO_FROM_PHONE",   "+1234567890")
 CAREGIVER_PHONE     = os.environ.get("CAREGIVER_PHONE",     "+0987654321")
 USE_TWILIO          = os.environ.get("USE_TWILIO",           "false").lower() == "true"
+USE_WHATSAPP        = os.environ.get("USE_WHATSAPP",         "false").lower() == "true"
 
 
-def send_sms_alert(interaction_id: int, risk_level: str, message: str, to_phone: str) -> bool:
+def send_sms_alert(interaction_id: int, response_data: dict, to_phone: str) -> bool:
     """
     Send an SMS alert to the caregiver.
     Uses real Twilio if USE_TWILIO=true, otherwise logs a mock.
     """
+    risk_level = response_data.get("risk_level", "UNKNOWN")
+    score = response_data.get("score", 0)
+    symptoms = response_data.get("symptoms", [])
+    action = response_data.get("action", "unknown")
+    
+    body = f"🚨 WELLRING ALERT\nRisk: {risk_level}\nScore: {score}\nSymptoms: {', '.join(symptoms)}\nAction: {action}\nCheck dashboard: https://wellring-frontend.vercel.app"
+
     if USE_TWILIO:
         try:
             from twilio.rest import Client
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            
+            # Format numbers for WhatsApp if enabled
+            msg_from = f"whatsapp:{TWILIO_FROM_PHONE}" if USE_WHATSAPP and not TWILIO_FROM_PHONE.startswith("whatsapp:") else TWILIO_FROM_PHONE
+            msg_to = f"whatsapp:{to_phone}" if USE_WHATSAPP and not to_phone.startswith("whatsapp:") else to_phone
+            
             client.messages.create(
-                body=f"[WellRing ALERT] {risk_level}: {message}",
-                from_=TWILIO_FROM_PHONE,
-                to=to_phone,
+                body=body,
+                from_=msg_from,
+                to=msg_to,
             )
-            logger.info(f"[SMS SENT to {to_phone}] {risk_level}: {message}")
+            msg_type = "WHATSAPP" if USE_WHATSAPP else "SMS"
+            logger.info(f"[{msg_type} SENT to {to_phone}] {risk_level}")
         except Exception as e:
             logger.error(f"[SMS FAILED] {e}")
             return False
     else:
-        logger.info(f"🚨 [SMS MOCK to {to_phone}] {risk_level}: {message}")
+        logger.info(f"🚨 [SMS MOCK to {to_phone}]\n{body}")
 
     log_alert(
         interaction_id=interaction_id,
@@ -58,11 +72,12 @@ def send_sms_alert(interaction_id: int, risk_level: str, message: str, to_phone:
     return True
 
 
-def trigger_alerts_if_needed(interaction_id: int, risk_level: str, message: str, user_id: Optional[str] = None):
+def trigger_alerts_if_needed(interaction_id: int, response_data: dict, user_id: Optional[str] = None):
     """
     Determines if an alert needs to be sent based on risk level.
     Fires for HIGH and CRITICAL only. Routes to the user's caregiver.
     """
+    risk_level = response_data.get("risk_level", "LOW")
     if risk_level in ["HIGH", "CRITICAL"]:
         phone = get_caregiver_phone(user_id, CAREGIVER_PHONE)
-        send_sms_alert(interaction_id, risk_level, message, to_phone=phone)
+        send_sms_alert(interaction_id, response_data, to_phone=phone)
