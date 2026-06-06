@@ -26,6 +26,7 @@ def client():
     from src.main import app
 
     with TestClient(app) as c:
+        c.headers.update({"X-API-Key": "wellring-secure-2026"})
         yield c
 
     # Cleanup the temp DB after all tests finish

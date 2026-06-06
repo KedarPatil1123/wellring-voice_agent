@@ -76,10 +76,9 @@ def run_simulation():
         print(f"\n[{idx}/5] 🏃 Scenario: {scenario['name']}")
         print(f"🗣️  User says: \"{scenario['input']}\"")
         
-        # Call the local FastAPI backend (mocking Kedar's pipeline)
-        print("🔄 Sending to FastAPI /assess...")
+        print("🔄 Sending to Render FastAPI /assess...")
         try:
-            r = httpx.post("http://localhost:8000/assess", json=scenario["mock_llm_json"])
+            r = httpx.post("https://wellring-backend.onrender.com/assess", json=scenario["mock_llm_json"], headers={"X-API-Key": "wellring-secure-2026"})
             r.raise_for_status()
             data = r.json()
             
@@ -97,26 +96,22 @@ def run_simulation():
             
         time.sleep(1)  # pause between scenarios
 
-    print("\n\n🗄️  Database Verification - Checking interactions log:")
+    print("\n\n🗄️  Remote API Verification - Fetching from Render /assessments:")
     print("=" * 80)
     try:
-        conn = sqlite3.connect("wellring.db")
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT timestamp, intent, symptoms, score, risk_level, action FROM interactions ORDER BY id DESC LIMIT 5")
-
-        rows = cursor.fetchall()
-        # Print in reverse so they match the order we ran them
+        r = httpx.get("https://wellring-backend.onrender.com/assessments?limit=5", headers={"X-API-Key": "wellring-secure-2026"})
+        r.raise_for_status()
+        rows = r.json()
+        
         for row in reversed(rows):
             print(f"[{row['timestamp']}]")
             print(f"  Risk: {row['risk_level']:<10} Score: {row['score']:<4} Action: {row['action']}")
-            print(f"  Symptoms: {row['symptoms']}")
+            print(f"  Symptoms: {row.get('symptoms')}")
             print("-" * 60)
 
-        conn.close()
-        print("Demo verification complete! ✅ All paths logged and verified.")
+        print("Demo verification complete! ✅ All paths logged and verified remotely.")
     except Exception as e:
-        print(f"Failed to read database: {e}")
+        print(f"Failed to read from Render API: {e}")
 
 if __name__ == "__main__":
     run_simulation()

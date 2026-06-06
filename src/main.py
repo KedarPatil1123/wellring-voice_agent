@@ -18,12 +18,26 @@ Interactive docs:
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends, status
+from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 import datetime
+import os
+
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+def get_api_key(api_key_header: str = Security(api_key_header)):
+    expected_key = os.environ.get("WELLRING_API_KEY", "wellring-secure-2026")
+    if api_key_header == expected_key:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API Key"
+    )
 
 from src.scoring_engine import calculate_score, determine_action
 from src.database import init_db, log_interaction, get_symptom_repeat_count
@@ -152,7 +166,7 @@ def health():
 
 
 @app.post("/assess", response_model=AssessResponse, tags=["Risk Assessment"])
-def assess(payload: AssessRequest):
+def assess(payload: AssessRequest, api_key: str = Depends(get_api_key)):
     """
     Core endpoint. Accepts the LLM-parsed voice input and returns a full
     health risk assessment with escalation steps.
@@ -266,7 +280,7 @@ import json
 from src.database import _resolve_db_path
 
 @app.get("/assessments", tags=["Dashboard"])
-def get_assessments(limit: int = 50, risk_level: Optional[str] = None):
+def get_assessments(limit: int = 50, risk_level: Optional[str] = None, api_key: str = Depends(get_api_key)):
     """Returns recent assessments (interactions) for the dashboard feed."""
     db_path = _resolve_db_path(None)
     conn = sqlite3.connect(db_path)
@@ -306,7 +320,7 @@ def get_assessments(limit: int = 50, risk_level: Optional[str] = None):
 
 
 @app.get("/assessments/stats", tags=["Dashboard"])
-def get_assessment_stats():
+def get_assessment_stats(api_key: str = Depends(get_api_key)):
     """Returns counts for dashboard cards."""
     db_path = _resolve_db_path(None)
     conn = sqlite3.connect(db_path)
@@ -335,7 +349,7 @@ def get_assessment_stats():
 
 
 @app.get("/patients", tags=["Dashboard"])
-def get_patients():
+def get_patients(api_key: str = Depends(get_api_key)):
     """Hardcoded for demo — replace with real DB later."""
     return [
         {

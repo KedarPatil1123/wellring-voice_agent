@@ -122,7 +122,12 @@ Output ONLY JSON matching this format:
                 "severity": severity,
                 "confidence": confidence,
             }
-            r = httpx.post("http://localhost:8000/assess", json=payload, timeout=5.0)
+            r = httpx.post(
+                "https://wellring-backend.onrender.com/assess",
+                json=payload,
+                headers={"X-API-Key": "wellring-secure-2026"},
+                timeout=5.0
+            )
             if r.status_code == 200:
                 assess_data = r.json()
                 context_for_llama = (
