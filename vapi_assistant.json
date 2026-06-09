@@ -1,0 +1,65 @@
+{
+  "name": "WellRing Nursing Assistant",
+  "firstMessage": "Hello, this is your WellRing nursing assistant. How are you feeling today?",
+  "model": {
+    "provider": "google",
+    "model": "gemini-1.5-flash",
+    "temperature": 0.4,
+    "systemPrompt": "You are a health assistant for elderly people.\n\nSTRICT RULES:\n1. If the user mentions chest pain, heart, breathing, fallen, unconscious, bleeding, stroke - start with: ALERT - Please call emergency services immediately on 112\n2. After alert, ask follow up questions calmly\n3. Always speak in very simple short sentences\n4. Never use difficult medical words\n5. Be warm and caring like a family member",
+    "tools": [
+      {
+        "type": "function",
+        "messages": [
+          {
+            "type": "request-start",
+            "content": "Let me assess your symptoms, one moment please."
+          }
+        ],
+        "function": {
+          "name": "assess_health_risk",
+          "description": "Assess the user's health symptoms and determine risk severity. Must be called whenever symptoms are mentioned.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "intent": {
+                "type": "string",
+                "enum": ["health_issue", "general"],
+                "description": "Whether the user is reporting a health issue."
+              },
+              "symptoms": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "List of symptoms mentioned by the user."
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+                "description": "The severity of the symptoms."
+              },
+              "confidence": {
+                "type": "number",
+                "description": "Confidence score of the assessment from 0.0 to 1.0."
+              }
+            },
+            "required": ["intent", "symptoms", "severity", "confidence"]
+          }
+        },
+        "server": {
+          "url": "https://wellring-backend.onrender.com/assess",
+          "headers": {
+            "X-API-Key": "wellring-secure-2026"
+          }
+        }
+      }
+    ]
+  },
+  "voice": {
+    "provider": "cartesia",
+    "voiceId": "248be419-c632-4f23-adf1-5324ed7dbf1d"
+  },
+  "transcriber": {
+    "provider": "deepgram",
+    "model": "nova-2",
+    "language": "en"
+  }
+}

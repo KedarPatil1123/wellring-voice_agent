@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Patients from './pages/Patients';
 import History from './pages/History';
 import Sidebar from './components/Sidebar';
+import VoiceWidget from './components/VoiceWidget';
 
 // Simple PrivateRoute wrapper checking localStorage
 function PrivateRoute({ children }) {
@@ -25,6 +26,7 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-gray-50">
       {isAuth && <Sidebar onLogout={handleLogout} />}
+      {isAuth && <VoiceWidget />}
       
       <main className="flex-1 overflow-x-hidden overflow-y-auto">
         <Routes>

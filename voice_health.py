@@ -1,4 +1,5 @@
-import ollama
+import google.generativeai as genai
+import typing_extensions as typing
 import whisper
 import wave
 import sounddevice as sd
@@ -8,6 +9,9 @@ import os
 import json
 import httpx
 from piper import PiperVoice
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Settings
 DURATION = 8
@@ -16,7 +20,6 @@ SAMPLE_RATE = 16000
 # Counter for recordings
 counter = 1
 
-# Load all models
 print("Loading Whisper...")
 whisper_model = whisper.load_model("base")
 
@@ -24,6 +27,12 @@ print("Loading English voice...")
 voice_en = PiperVoice.load("en_US-ryan-high.onnx")
 
 print("\nAll models loaded! Ready!\n")
+
+# Setup Gemini
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    print("WARNING: GEMINI_API_KEY environment variable is not set. Gemini API calls will fail.")
+genai.configure(api_key=api_key)
 
 # Health assistant system prompt
 system_prompt = """You are a health assistant for elderly people.
@@ -35,8 +44,21 @@ STRICT RULES:
 4. Never use difficult medical words
 5. Be warm and caring like a family member"""
 
-# Conversation history
-conversation = [{"role": "system", "content": system_prompt}]
+# Schema for structured output extraction
+class SymptomExtraction(typing.TypedDict):
+    intent: str
+    symptoms: list[str]
+    severity: str
+    confidence: float
+
+# Initialize Gemini models
+extractor_model = genai.GenerativeModel("gemini-1.5-flash")
+conversation_model = genai.GenerativeModel(
+    "gemini-1.5-flash",
+    system_instruction=system_prompt
+)
+chat = conversation_model.start_chat()
+
 
 def record_audio():
     """Record audio from microphone"""
@@ -58,10 +80,13 @@ def record_audio():
     )
     sd.wait()
     
+    # Ensure audios directory exists
+    os.makedirs("audios", exist_ok=True)
     filename = f"audios/recording{counter}.wav"
     sf.write(filename, recording, SAMPLE_RATE)
     print("Processing...")
     return filename
+
 
 def transcribe(filename):
     """Convert audio to text using Whisper"""
@@ -73,35 +98,30 @@ def transcribe(filename):
     )
     return result['text'].strip()
 
+
 def speak(text):
     """Convert text to speech using Piper"""
     with wave.open("audios/response.wav", "wb") as wav_file:
         voice_en.synthesize_wav(text, wav_file)
     os.system("aplay audios/response.wav")
 
-def ask_llama(user_text):
-    """Send message to Llama 3 and get response"""
-    # 1. Extract JSON
-    extract_msgs = [
-        {"role": "system", "content": """Extract health symptoms from the user's input.
-Output ONLY JSON matching this format:
-{
-  "intent": "health_issue" or "general",
-  "symptoms": ["chest_pain", "breathing_problem", "dizziness", "fever", "medicine_missed", "fall_detected", "unconscious", "stroke_symptoms"],
-  "severity": "low", "medium", "high", or "critical",
-  "confidence": 0.95
-}"""},
-        {"role": "user", "content": user_text}
-    ]
-    
+
+def ask_gemini(user_text):
+    """Send message to Gemini and get response"""
     print("Assessing risk...")
-    extraction = ollama.chat(model="llama3.2:1b", messages=extract_msgs, format="json")
-    context_for_llama = ""
+    context_for_gemini = ""
     try:
-        parsed = json.loads(extraction['message']['content'])
+        # 1. Extract JSON using Gemini Structured Outputs
+        extract_result = extractor_model.generate_content(
+            f"Extract health symptoms from the user's input.\nUser input: {user_text}",
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=SymptomExtraction,
+            )
+        )
+        parsed = json.loads(extract_result.text)
         print(f"[LLM Extracted] {parsed}")
 
-        # Only call the backend when it's a real health issue with required fields
         intent = parsed.get("intent", "general")
         severity = parsed.get("severity", "").lower().strip()
         symptoms = parsed.get("symptoms", [])
@@ -130,7 +150,7 @@ Output ONLY JSON matching this format:
             )
             if r.status_code == 200:
                 assess_data = r.json()
-                context_for_llama = (
+                context_for_gemini = (
                     f"\n[SYSTEM: User Risk Level is {assess_data['risk_level']}. "
                     f"Action: {assess_data['action']}. "
                     f"Steps: {', '.join(assess_data['steps'])}]"
@@ -140,19 +160,18 @@ Output ONLY JSON matching this format:
         else:
             print("[Skipping /assess — general conversation or incomplete extraction]")
     except Exception as e:
-        print(f"[Assessment Error - is the server running?] {e}")
+        print(f"[Assessment Error - is the server running or Gemini key valid?] {e}")
 
-    # 3. Generate conversational response
-    conversation.append({"role": "user", "content": user_text + context_for_llama})
-    
-    response = ollama.chat(
-        model="llama3.2:1b",
-        messages=conversation
-    )
-    
-    reply = response['message']['content']
-    conversation.append({"role": "assistant", "content": reply})
+    # 3. Generate conversational response with injected backend context
+    try:
+        response = chat.send_message(user_text + context_for_gemini)
+        reply = response.text
+    except Exception as e:
+        print(f"[Gemini Error] {e}")
+        reply = "I'm sorry, I'm having trouble connecting to my brain."
+
     return reply
+
 
 if __name__ == "__main__":
     print("Voice Health Assistant Ready!")
@@ -172,13 +191,13 @@ if __name__ == "__main__":
         
         counter += 1
         
-        # Don't call Llama if nothing was heard
+        # Don't call Gemini if nothing was heard
         if not user_text:
             print("Didn't catch that! Please try again.")
             continue
         
         # Get AI response
-        reply = ask_llama(user_text)
+        reply = ask_gemini(user_text)
         print(f"\nAssistant: {reply}\n")
         
         # Speak the response

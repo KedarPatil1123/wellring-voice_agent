@@ -81,3 +81,32 @@ def trigger_alerts_if_needed(interaction_id: int, response_data: dict, user_id: 
     if risk_level in ["HIGH", "CRITICAL"]:
         phone = get_caregiver_phone(user_id, CAREGIVER_PHONE)
         send_sms_alert(interaction_id, response_data, to_phone=phone)
+
+
+def send_whatsapp_reminder(to_phone: str, body: str) -> bool:
+    """
+    Send a WhatsApp reminder notification.
+    Uses Twilio's WhatsApp API if USE_TWILIO=true, otherwise logs a mock.
+    """
+    if USE_TWILIO:
+        try:
+            from twilio.rest import Client
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            
+            msg_from = f"whatsapp:{TWILIO_FROM_PHONE}" if not TWILIO_FROM_PHONE.startswith("whatsapp:") else TWILIO_FROM_PHONE
+            msg_to = f"whatsapp:{to_phone}" if not to_phone.startswith("whatsapp:") else to_phone
+            
+            client.messages.create(
+                body=body,
+                from_=msg_from,
+                to=msg_to,
+            )
+            logger.info(f"[WHATSAPP SENT to {to_phone}] Reminder: {body[:30]}...")
+            return True
+        except Exception as e:
+            logger.error(f"[WHATSAPP FAILED] {e}")
+            return False
+    else:
+        logger.info(f"🚨 [WHATSAPP MOCK to {to_phone}]\n{body}")
+        return True
+

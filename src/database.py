@@ -85,6 +85,20 @@ def init_db(db_path: Optional[str] = None):
             FOREIGN KEY(interaction_id) REFERENCES interactions(id)
         )
     ''')
+
+    # Reminders table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            time TEXT NOT NULL,
+            frequency TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            notes TEXT,
+            last_triggered TEXT
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -232,3 +246,76 @@ def log_alert(interaction_id: int, timestamp: str, risk_level: str, notification
     
     conn.commit()
     conn.close()
+
+
+def add_reminder(type_val: str, title: str, time_val: str, frequency: str, phone: str, notes: Optional[str] = None, db_path: Optional[str] = None) -> int:
+    """Add a new scheduled reminder."""
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO reminders (type, title, time, frequency, phone, notes, last_triggered)
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
+    ''', (type_val, title, time_val, frequency, phone, notes))
+    
+    reminder_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return reminder_id
+
+
+def get_reminders(db_path: Optional[str] = None) -> list:
+    """Retrieve all reminders as dictionaries."""
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT * FROM reminders')
+    rows = cursor.fetchall()
+    
+    reminders = []
+    for r in rows:
+        reminders.append({
+            "id": r["id"],
+            "type": r["type"],
+            "title": r["title"],
+            "time": r["time"],
+            "frequency": r["frequency"],
+            "phone": r["phone"],
+            "notes": r["notes"],
+            "last_triggered": r["last_triggered"]
+        })
+        
+    conn.close()
+    return reminders
+
+
+def delete_reminder(reminder_id: int, db_path: Optional[str] = None) -> bool:
+    """Delete a reminder by ID."""
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('DELETE FROM reminders WHERE id = ?', (reminder_id,))
+    rows_deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    return rows_deleted > 0
+
+
+def update_reminder_trigger(reminder_id: int, timestamp: str, db_path: Optional[str] = None) -> bool:
+    """Update last_triggered timestamp for a reminder."""
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('UPDATE reminders SET last_triggered = ? WHERE id = ?', (timestamp, reminder_id))
+    rows_updated = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    return rows_updated > 0
+

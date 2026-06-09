@@ -26,6 +26,11 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 import datetime
 import os
+import asyncio
+import logging
+import sqlite3
+
+logger = logging.getLogger(__name__)
 
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
@@ -40,17 +45,106 @@ def get_api_key(api_key_header: str = Security(api_key_header)):
     )
 
 from src.scoring_engine import calculate_score, determine_action
-from src.database import init_db, log_interaction, get_symptom_repeat_count
-from src.notifications import trigger_alerts_if_needed
+from src.database import (
+    init_db, log_interaction, get_symptom_repeat_count,
+    add_reminder, get_reminders, delete_reminder, update_reminder_trigger
+)
+from src.notifications import trigger_alerts_if_needed, send_whatsapp_reminder
+
+# ---------------------------------------------------------------------------
+# Background Reminder Scheduler
+# ---------------------------------------------------------------------------
+
+async def run_reminder_scheduler():
+    logger.info("Starting background reminder scheduler...")
+    while True:
+        try:
+            await asyncio.sleep(15)  # check every 15 seconds for responsive testing
+            reminders = get_reminders()
+            if not reminders:
+                continue
+                
+            now = datetime.datetime.now()
+            current_time_str = now.strftime("%H:%M")
+            current_date_str = now.strftime("%Y-%m-%d")
+            
+            for reminder in reminders:
+                rem_id = reminder["id"]
+                rem_type = reminder["type"]
+                rem_title = reminder["title"]
+                rem_time = reminder["time"]
+                rem_freq = reminder["frequency"]
+                rem_phone = reminder["phone"]
+                rem_notes = reminder["notes"] or ""
+                last_trig = reminder["last_triggered"]
+                
+                should_trigger = False
+                trigger_timestamp = ""
+                
+                if rem_freq == "once" or "T" in rem_time:
+                    try:
+                        # e.g., "2026-06-10T14:30"
+                        rem_dt = datetime.datetime.fromisoformat(rem_time.replace("Z", ""))
+                        if now >= rem_dt and not last_trig:
+                            should_trigger = True
+                            trigger_timestamp = now.isoformat()
+                    except Exception as e:
+                        logger.error(f"Error parsing date {rem_time}: {e}")
+                else:
+                    if current_time_str == rem_time:
+                        if rem_freq == "daily":
+                            if last_trig != current_date_str:
+                                should_trigger = True
+                                trigger_timestamp = current_date_str
+                        elif rem_freq == "monthly":
+                            current_month = now.strftime("%Y-%m")
+                            if last_trig != current_month:
+                                should_trigger = True
+                                trigger_timestamp = current_month
+                        elif rem_freq == "yearly":
+                            current_year = now.strftime("%Y")
+                            if last_trig != current_year:
+                                should_trigger = True
+                                trigger_timestamp = current_year
+                
+                if should_trigger:
+                    if rem_type == "call":
+                        body = f"📞 WellRing Daily Voice Call Reminder:\nTime for your scheduled check-in call.\nNotes: {rem_notes}"
+                    elif rem_type == "medicine":
+                        body = f"💊 WellRing Medicine Reminder:\nPlease take {rem_title}.\nNotes: {rem_notes}"
+                    elif rem_type == "checkup":
+                        body = f"🏥 WellRing Health Checkup Reminder:\nYou have '{rem_title}' scheduled.\nNotes: {rem_notes}"
+                    else:
+                        body = f"⏰ WellRing Reminder: {rem_title}.\nNotes: {rem_notes}"
+                    
+                    logger.info(f"Triggering reminder {rem_id} ({rem_title}) for {rem_phone}")
+                    success = send_whatsapp_reminder(rem_phone, body)
+                    if success:
+                        update_reminder_trigger(rem_id, trigger_timestamp)
+        except asyncio.CancelledError:
+            logger.info("Reminder scheduler task cancelled.")
+            break
+        except Exception as ex:
+            logger.error(f"Error in reminder scheduler: {ex}")
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 
+scheduler_task = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global scheduler_task
     init_db()
+    scheduler_task = asyncio.create_task(run_reminder_scheduler())
     yield
+    if scheduler_task:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
 
 app = FastAPI(
     title="WellRing Health Risk API",
@@ -222,7 +316,7 @@ def assess(payload: AssessRequest, api_key: str = Depends(get_api_key)):
     interaction_id = log_interaction(log_data)
     
     # Trigger alerts if necessary
-    trigger_alerts_if_needed(interaction_id, response_data["risk_level"], response_data["message"], payload.user_id)
+    trigger_alerts_if_needed(interaction_id, response_data, payload.user_id)
 
     return AssessResponse(**response_data)
 
@@ -362,3 +456,42 @@ def get_patients(api_key: str = Depends(get_api_key)):
             "status": "active"
         }
     ]
+
+
+class ReminderCreate(BaseModel):
+    type: str = Field(..., description="call | medicine | checkup")
+    title: str = Field(..., description="Title/name of the reminder")
+    time: str = Field(..., description="Time (HH:MM) or datetime (ISO string)")
+    frequency: str = Field(..., description="daily | monthly | yearly | once")
+    phone: str = Field(..., description="WhatsApp phone number")
+    notes: Optional[str] = None
+
+
+@app.get("/reminders", tags=["Reminders"])
+def list_reminders(api_key: str = Depends(get_api_key)):
+    """Retrieve all reminders."""
+    return get_reminders()
+
+
+@app.post("/reminders", tags=["Reminders"], status_code=status.HTTP_201_CREATED)
+def create_reminder(payload: ReminderCreate, api_key: str = Depends(get_api_key)):
+    """Create a new reminder schedule."""
+    reminder_id = add_reminder(
+        type_val=payload.type,
+        title=payload.title,
+        time_val=payload.time,
+        frequency=payload.frequency,
+        phone=payload.phone,
+        notes=payload.notes
+    )
+    return {"id": reminder_id, "message": "Reminder scheduled successfully"}
+
+
+@app.delete("/reminders/{reminder_id}", tags=["Reminders"])
+def remove_reminder(reminder_id: int, api_key: str = Depends(get_api_key)):
+    """Delete a reminder schedule."""
+    success = delete_reminder(reminder_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"message": "Reminder deleted successfully"}
+
