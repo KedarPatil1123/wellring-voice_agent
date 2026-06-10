@@ -18,17 +18,18 @@ Interactive docs:
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Security, Depends, status
+from fastapi import FastAPI, HTTPException, Security, Depends, status, Request
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import datetime
 import os
 import asyncio
 import logging
 import sqlite3
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def get_api_key(api_key_header: str = Security(api_key_header)):
         detail="Invalid or missing API Key"
     )
 
-from src.scoring_engine import calculate_score, determine_action
+from src.scoring_engine import calculate_score, determine_action, SYMPTOM_WEIGHTS
 from src.database import (
     init_db, log_interaction, get_symptom_repeat_count,
     add_reminder, get_reminders, delete_reminder, update_reminder_trigger
@@ -199,6 +200,7 @@ class AssessRequest(BaseModel):
         examples=[0.95],
     )
     user_id: Optional[str] = Field(None, description="UUID of the user (patient)")
+    recording_url: Optional[str] = Field(None, description="URL to the audio recording of the assessment")
 
     @field_validator("severity")
     @classmethod
@@ -236,6 +238,7 @@ class AssessResponse(BaseModel):
 
     # --- Meta ---
     timestamp: str     = Field(..., description="ISO 8601 UTC timestamp of the assessment")
+    recording_url: Optional[str] = Field(None, description="URL to the audio recording if provided")
 
 
 class HealthResponse(BaseModel):
@@ -259,66 +262,158 @@ def health():
     return HealthResponse(status="ok", version="1.0.0")
 
 
-@app.post("/assess", response_model=AssessResponse, tags=["Risk Assessment"])
-def assess(payload: AssessRequest, api_key: str = Depends(get_api_key)):
+@app.post("/assess", tags=["Risk Assessment"])
+async def assess(request: Request, api_key: str = Depends(get_api_key)):
     """
-    Core endpoint. Accepts the LLM-parsed voice input and returns a full
-    health risk assessment with escalation steps.
+    Core endpoint. Accepts the LLM-parsed voice input (either flat or wrapped in Vapi's webhook format)
+    and returns a health risk assessment with escalation steps.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    **Typical flow:**
-    1. User speaks → Whisper (STT) → Llama 3 (NLU) → this endpoint
-    2. Scoring engine calculates risk score
-    3. Alert engine determines escalation action
-    4. Response is spoken back to the user and logged
-    """
+    # Check if this is a Vapi tool call request
+    is_vapi = False
+    tool_call_id = None
+    
+    # Check for Vapi tool-calls format
+    if isinstance(body, dict) and "message" in body:
+        msg = body["message"]
+        if isinstance(msg, dict) and msg.get("type") in ("tool-calls", "function-call"):
+            is_vapi = True
+            tool_calls = msg.get("toolCalls", [])
+            if not tool_calls and "call" in msg:
+                tool_calls = [msg.get("call")]
+            
+            if tool_calls:
+                first_call = tool_calls[0]
+                tool_call_id = first_call.get("id")
+                func = first_call.get("function", {})
+                args = func.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        pass
+                
+                # Extract fields from Vapi tool call arguments
+                intent = args.get("intent", "health_issue")
+                symptoms = args.get("symptoms", [])
+                severity = args.get("severity", "medium")
+                confidence = args.get("confidence", 1.0)
+                user_id = args.get("user_id")
+                recording_url = args.get("recording_url")
+            else:
+                raise HTTPException(status_code=400, detail="Vapi tool-calls empty")
+    else:
+        # Standard direct AssessRequest payload
+        try:
+            payload = AssessRequest(**body)
+            intent = payload.intent
+            symptoms = payload.symptoms
+            severity = payload.severity
+            confidence = payload.confidence
+            user_id = payload.user_id
+            recording_url = payload.recording_url
+        except Exception as err:
+            raise HTTPException(status_code=422, detail=str(err))
+
+    # Normalize symptoms (Vapi LLM may output symptoms with spaces or minor spelling variations)
+    normalized_symptoms = []
+    for s in symptoms:
+        s_norm = s.lower().strip().replace(" ", "_").replace("-", "_")
+        # Direct aliases
+        if s_norm == "dizzy":
+            s_norm = "dizziness"
+        elif s_norm == "fall":
+            s_norm = "fall_detected"
+        elif s_norm == "stroke":
+            s_norm = "stroke_symptoms"
+        elif s_norm in ("short_of_breath", "difficulty_breathing", "breathing_difficulty"):
+            s_norm = "breathing_problem"
+        
+        # Add if it matches a valid symptom key in SYMPTOM_WEIGHTS
+        if s_norm in SYMPTOM_WEIGHTS:
+            normalized_symptoms.append(s_norm)
+        else:
+            # Check for partial matches
+            matched = False
+            for valid_key in SYMPTOM_WEIGHTS.keys():
+                if valid_key in s_norm or s_norm in valid_key:
+                    normalized_symptoms.append(valid_key)
+                    matched = True
+                    break
+            if not matched:
+                normalized_symptoms.append(s)
+
+    # Normalize severity
+    severity_lower = severity.lower().strip()
+    if severity_lower not in {"low", "medium", "high", "critical"}:
+        severity_lower = "medium"
+
     try:
         # Build history counts for each symptom from the last 3 days
         history_counts = {
             s: get_symptom_repeat_count(s, days=3)
-            for s in payload.symptoms
+            for s in normalized_symptoms
         }
 
         score_result = calculate_score(
-            symptoms=payload.symptoms,
-            severity=payload.severity,
-            confidence=payload.confidence,
+            symptoms=normalized_symptoms,
+            severity=severity_lower,
+            confidence=confidence,
             history_counts=history_counts,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    alert_result = determine_action(score_result["score"], payload.confidence)
+    alert_result = determine_action(score_result["score"], confidence)
 
     response_data = {
-        # score block
         "score": score_result["score"],
         "base_score": score_result["base_score"],
         "confidence": score_result["confidence"],
-        # classification block
         "risk_level": score_result["risk_level"],
         "category": score_result["category"],
         "symptoms": score_result["symptoms"],
-        "severity": score_result["severity"],
-        # escalation block
+        "severity": score_result.get("severity", severity_lower),
         "action": alert_result["action"],
         "message": alert_result["message"],
         "steps": alert_result["steps"],
-        # explainability block
         "breakdown": score_result["breakdown"],
-        # meta
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "recording_url": recording_url,
     }
     
     # Log interaction to database
     log_data = response_data.copy()
-    log_data["intent"] = payload.intent
-    log_data["user_id"] = payload.user_id
+    log_data["intent"] = intent
+    log_data["user_id"] = user_id
     interaction_id = log_interaction(log_data)
     
     # Trigger alerts if necessary
-    trigger_alerts_if_needed(interaction_id, response_data, payload.user_id)
+    trigger_alerts_if_needed(interaction_id, response_data, user_id)
 
-    return AssessResponse(**response_data)
+    # Return structure based on who called it
+    if is_vapi:
+        return {
+            "results": [
+                {
+                    "toolCallId": tool_call_id,
+                    "result": {
+                        "score": response_data["score"],
+                        "risk_level": response_data["risk_level"],
+                        "category": response_data["category"],
+                        "action": response_data["action"],
+                        "message": response_data["message"],
+                        "steps": response_data["steps"]
+                    }
+                }
+            ]
+        }
+    else:
+        return AssessResponse(**response_data)
 
 
 @app.get("/symptoms", tags=["Reference"])
@@ -369,8 +464,6 @@ def list_risk_levels():
 # Dashboard Endpoints
 # ---------------------------------------------------------------------------
 
-import sqlite3
-import json
 from src.database import _resolve_db_path
 
 @app.get("/assessments", tags=["Dashboard"])

@@ -57,7 +57,8 @@ def init_db(db_path: Optional[str] = None):
             category TEXT NOT NULL,
             action TEXT NOT NULL,
             message TEXT NOT NULL,
-            user_id TEXT
+            user_id TEXT,
+            recording_url TEXT
         )
     ''')
     
@@ -124,7 +125,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
                     "category": data["category"],
                     "action": data["action"],
                     "message": data["message"],
-                    "user_id": data.get("user_id")
+                    "user_id": data.get("user_id"),
+                    "recording_url": data.get("recording_url")
                 }).execute()
                 if res.data and len(res.data) > 0:
                     return res.data[0]["id"]
@@ -139,8 +141,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     cursor.execute('''
         INSERT INTO interactions (
             timestamp, intent, symptoms, severity, confidence,
-            score, risk_level, category, action, message, user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            score, risk_level, category, action, message, user_id, recording_url
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data["timestamp"],
         data.get("intent", ""),
@@ -152,7 +154,8 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
         data["category"],
         data["action"],
         data["message"],
-        data.get("user_id")
+        data.get("user_id"),
+        data.get("recording_url")
     ))
     
     interaction_id = cursor.lastrowid
