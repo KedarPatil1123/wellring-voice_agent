@@ -199,3 +199,79 @@ def test_steps_is_non_empty_list(client):
     steps = r.json()["steps"]
     assert isinstance(steps, list)
     assert len(steps) > 0
+
+
+# ---------------------------------------------------------------------------
+# Vapi Tool Call & Webhook Payload Tests
+# ---------------------------------------------------------------------------
+
+def test_vapi_tool_calls_payload(client):
+    payload = {
+        "message": {
+            "type": "tool-calls",
+            "toolCalls": [
+                {
+                    "id": "call_vapi_test_999",
+                    "type": "function",
+                    "function": {
+                        "name": "assess_health_risk",
+                        "arguments": {
+                            "intent": "health_issue",
+                            "symptoms": ["chest pain", "short of breath"],
+                            "severity": "critical",
+                            "confidence": 0.95,
+                            "user_id": "test_user_vapi"
+                        }
+                    }
+                }
+            ]
+        }
+    }
+    r = client.post("/assess", json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    
+    # Verify Vapi-style response format
+    assert "results" in data
+    assert isinstance(data["results"], list)
+    assert len(data["results"]) == 1
+    
+    result_item = data["results"][0]
+    assert result_item["toolCallId"] == "call_vapi_test_999"
+    assert "result" in result_item
+    
+    res_details = result_item["result"]
+    assert res_details["risk_level"] == "CRITICAL"
+    assert res_details["category"] == "CARDIAC"
+    assert res_details["action"] == "notify_caregiver_and_emergency_services"
+    assert "score" in res_details
+
+
+def test_vapi_symptom_normalization(client):
+    payload = {
+        "message": {
+            "type": "tool-calls",
+            "toolCalls": [
+                {
+                    "id": "call_vapi_norm_123",
+                    "type": "function",
+                    "function": {
+                        "name": "assess_health_risk",
+                        "arguments": {
+                            "intent": "health_issue",
+                            "symptoms": ["dizzy", "fall", "stroke", "difficulty breathing"],
+                            "severity": "high",
+                            "confidence": 0.90
+                        }
+                    }
+                }
+            ]
+        }
+    }
+    r = client.post("/assess", json=payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert "results" in data
+    res_details = data["results"][0]["result"]
+    # Check that score calculation completed successfully with normalized inputs
+    assert "score" in res_details
