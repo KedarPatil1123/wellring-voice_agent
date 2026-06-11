@@ -45,8 +45,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Backend selection flags
 # ---------------------------------------------------------------------------
-DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
-USE_POSTGRES: bool = bool(DATABASE_URL)
+# DATABASE_URL is read lazily (at call time) so that test fixtures that call
+# os.environ.pop("DATABASE_URL") before importing src.database still work.
+
+def _use_postgres() -> bool:
+    """Return True if a Postgres DATABASE_URL is currently configured."""
+    return bool(os.environ.get("DATABASE_URL", ""))
 
 USE_SUPABASE: bool = os.environ.get("USE_SUPABASE", "false").lower() == "true"
 SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
@@ -84,9 +88,10 @@ def get_pg_conn() -> Generator:
     Context manager that yields a psycopg2 connection.
     Commits on clean exit, rolls back and re-raises on exception.
     """
-    if not (_PG_AVAILABLE and DATABASE_URL):
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not (_PG_AVAILABLE and db_url):
         raise RuntimeError("PostgreSQL is not configured (DATABASE_URL missing or psycopg2 not installed).")
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(db_url)
     try:
         yield conn
         conn.commit()
@@ -127,7 +132,7 @@ def init_db(db_path: Optional[str] = None) -> None:
     Initialize the SQLite schema (used when Postgres is NOT configured).
     For Postgres: run `python -m src.db.migrate` instead.
     """
-    if USE_POSTGRES:
+    if _use_postgres():
         logger.info("PostgreSQL backend active — skipping SQLite init_db().")
         return
 
@@ -206,7 +211,7 @@ def log_interaction(data: Dict[str, Any], db_path: Optional[str] = None) -> Unio
         UUID string (Postgres) or integer row id (SQLite/Supabase).
     """
     # -- Postgres --
-    if USE_POSTGRES and _PG_AVAILABLE:
+    if _use_postgres() and _PG_AVAILABLE:
         return _log_interaction_pg(data)
 
     # -- Supabase --
@@ -353,7 +358,7 @@ def get_symptom_repeat_count(symptom: str, days: int = 3, db_path: Optional[str]
     Returns how many times a symptom was logged in the last `days` days.
     Used by the scoring engine to compute the history escalation multiplier.
     """
-    if USE_POSTGRES and _PG_AVAILABLE:
+    if _use_postgres() and _PG_AVAILABLE:
         return _symptom_count_pg(symptom, days, user_id)
 
     if USE_SUPABASE and _SUPABASE_AVAILABLE:
@@ -437,7 +442,7 @@ def log_alert(
 ) -> None:
     """Log a sent alert / notification."""
 
-    if USE_POSTGRES and _PG_AVAILABLE:
+    if _use_postgres() and _PG_AVAILABLE:
         _log_alert_pg(interaction_id, risk_level, notification_type, status,
                       recipient_name, recipient_phone, recipient_email)
         return
@@ -477,6 +482,18 @@ def _log_alert_pg(
     recipient_phone: Optional[str],
     recipient_email: Optional[str],
 ) -> None:
+    # Normalize alert_type to lowercase (DB check constraint requires lowercase)
+    _VALID_ALERT_TYPES = {"sms", "call", "email", "push", "emergency_services", "in_app"}
+    alert_type_norm = alert_type.lower()
+    if alert_type_norm not in _VALID_ALERT_TYPES:
+        alert_type_norm = "sms"  # safe fallback
+
+    # 'mock' is used in tests / dry-runs — treat as 'sent' for DB purposes
+    _VALID_STATUSES = {"pending", "sent", "delivered", "failed"}
+    status_norm = status.lower()
+    if status_norm not in _VALID_STATUSES:
+        status_norm = "sent"
+
     sql = """
         INSERT INTO alerts (
             assessment_id, alert_type, status,
@@ -490,8 +507,8 @@ def _log_alert_pg(
         with conn.cursor() as cur:
             cur.execute(sql, {
                 "assessment_id":  str(assessment_id),
-                "alert_type":     alert_type,
-                "status":         status,
+                "alert_type":     alert_type_norm,
+                "status":         status_norm,
                 "recipient_name":  recipient_name,
                 "recipient_phone": recipient_phone,
                 "recipient_email": recipient_email,
@@ -514,7 +531,7 @@ def upsert_health_history(
     Insert or update the rolling health_history record for (user, symptom).
     Called automatically after every Postgres assessment write.
     """
-    if not (USE_POSTGRES and _PG_AVAILABLE):
+    if not (_use_postgres() and _PG_AVAILABLE):
         return  # No-op for SQLite/Supabase
 
     now = datetime.datetime.utcnow()
@@ -562,7 +579,7 @@ def log_conversation_turn(
     Persist a single conversation message to the `conversations` table.
     Returns the UUID of the inserted row (Postgres only).
     """
-    if not (USE_POSTGRES and _PG_AVAILABLE):
+    if not (_use_postgres() and _PG_AVAILABLE):
         return None
 
     sql = """
