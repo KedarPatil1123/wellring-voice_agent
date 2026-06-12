@@ -28,11 +28,10 @@ openai-whisper==20250625
 packaging==26.2
 pathvalidate==3.3.1
 piper-tts==1.4.2
-protobuf==7.35.0
+protobuf>=5.29.6,<6.0.0
 pycparser==3.0
 pydantic==2.13.4
 pydantic_core==2.46.4
-python-dotenv==1.1.0
 regex==2026.5.9
 requests==2.34.2
 setuptools==81.0.0
