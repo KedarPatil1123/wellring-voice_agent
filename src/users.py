@@ -9,12 +9,30 @@ import sqlite3
 import os
 import logging
 from typing import Optional, Dict, Any
-from src.database import get_supabase, _resolve_db_path, USE_SUPABASE
+from src.database import (
+    get_supabase, _resolve_db_path, USE_SUPABASE,
+    _use_postgres, _PG_AVAILABLE, get_pg_conn, _pg_cursor
+)
 
 logger = logging.getLogger(__name__)
 
 def get_user(user_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Fetch user profile by UUID or string ID."""
+    # -- Postgres --
+    if _use_postgres() and _PG_AVAILABLE:
+        try:
+            with get_pg_conn() as conn:
+                with _pg_cursor(conn) as cur:
+                    cur.execute("SELECT * FROM users WHERE user_id = %s LIMIT 1", (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        r_dict = dict(row)
+                        r_dict["id"] = str(r_dict["user_id"])
+                        return r_dict
+        except Exception as e:
+            logger.error(f"Postgres get_user failed: {e}. Falling back to SQLite/Supabase.")
+
+    # -- Supabase --
     if USE_SUPABASE:
         supabase = get_supabase()
         if supabase:

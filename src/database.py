@@ -659,3 +659,255 @@ def update_reminder_trigger(reminder_id: int, timestamp: str, db_path: Optional[
     conn.commit()
     conn.close()
     return updated
+
+
+# ===========================================================================
+# History Retrieval and Stats (Unified Multi-backend)
+# ===========================================================================
+
+def _get_assessments_pg(limit: int = 50, risk_level: Optional[str] = None) -> List[Dict[str, Any]]:
+    sql = """
+        SELECT assessment_id AS id,
+               assessment_id,
+               assessed_at AS timestamp,
+               assessed_at,
+               intent,
+               symptoms,
+               severity,
+               confidence,
+               score,
+               base_score,
+               risk_level,
+               category,
+               action,
+               message,
+               user_id,
+               recording_url
+        FROM assessments
+    """
+    params = []
+    if risk_level:
+        sql += " WHERE risk_level = %s"
+        params.append(risk_level.upper())
+    
+    sql += " ORDER BY assessed_at DESC LIMIT %s"
+    params.append(limit)
+    
+    with get_pg_conn() as conn:
+        with _pg_cursor(conn) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            
+    result = []
+    for r in rows:
+        r_dict = dict(r)
+        if r_dict.get("confidence") is not None:
+            r_dict["confidence"] = float(r_dict["confidence"])
+        if r_dict.get("timestamp") is not None:
+            if hasattr(r_dict["timestamp"], "isoformat"):
+                r_dict["timestamp"] = r_dict["timestamp"].isoformat()
+        if r_dict.get("assessed_at") is not None:
+            if hasattr(r_dict["assessed_at"], "isoformat"):
+                r_dict["assessed_at"] = r_dict["assessed_at"].isoformat()
+        if r_dict.get("id") is not None:
+            r_dict["id"] = str(r_dict["id"])
+        if r_dict.get("assessment_id") is not None:
+            r_dict["assessment_id"] = str(r_dict["assessment_id"])
+        if r_dict.get("user_id") is not None:
+            r_dict["user_id"] = str(r_dict["user_id"])
+        if r_dict.get("symptoms") is None:
+            r_dict["symptoms"] = []
+        result.append(r_dict)
+    return result
+
+
+def _get_assessment_stats_pg() -> Dict[str, Any]:
+    sql = """
+        SELECT 
+            COUNT(*) as total_today,
+            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low,
+            SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium,
+            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high,
+            SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical
+        FROM assessments 
+        WHERE assessed_at::date = CURRENT_DATE
+    """
+    with get_pg_conn() as conn:
+        with _pg_cursor(conn) as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            
+    if not row:
+        return {"total_today": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+        
+    return {
+        "total_today": int(row["total_today"] or 0),
+        "low": int(row["low"] or 0),
+        "medium": int(row["medium"] or 0),
+        "high": int(row["high"] or 0),
+        "critical": int(row["critical"] or 0)
+    }
+
+
+def _get_assessments_supabase(limit: int = 50, risk_level: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
+    supabase = get_supabase()
+    if not supabase:
+        return None
+    try:
+        q = supabase.table("interactions").select("*")
+        if risk_level:
+            q = q.eq("risk_level", risk_level.upper())
+        res = q.order("timestamp", desc=True).limit(limit).execute()
+        
+        result = []
+        for r in (res.data or []):
+            r_dict = dict(r)
+            if isinstance(r_dict.get("symptoms"), str):
+                try:
+                    r_dict["symptoms"] = json.loads(r_dict["symptoms"])
+                except Exception:
+                    pass
+            elif r_dict.get("symptoms") is None:
+                r_dict["symptoms"] = []
+            result.append(r_dict)
+        return result
+    except Exception as exc:
+        logger.error(f"Supabase get_assessments failed: {exc}")
+    return None
+
+
+def _get_assessment_stats_supabase() -> Optional[Dict[str, Any]]:
+    supabase = get_supabase()
+    if not supabase:
+        return None
+    try:
+        today_start = datetime.datetime.utcnow().date().isoformat() + "T00:00:00Z"
+        res = supabase.table("interactions").select("risk_level").gte("timestamp", today_start).execute()
+        
+        counts = {"total_today": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+        for r in (res.data or []):
+            rl = str(r.get("risk_level") or "").upper()
+            counts["total_today"] += 1
+            if rl == "LOW":
+                counts["low"] += 1
+            elif rl == "MEDIUM":
+                counts["medium"] += 1
+            elif rl == "HIGH":
+                counts["high"] += 1
+            elif rl == "CRITICAL":
+                counts["critical"] += 1
+        return counts
+    except Exception as exc:
+        logger.error(f"Supabase get_assessment_stats failed: {exc}")
+    return None
+
+
+def _get_assessments_sqlite(limit: int = 50, risk_level: Optional[str] = None, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='interactions'
+    """)
+    if not cursor.fetchone():
+        conn.close()
+        return []
+    
+    query = "SELECT * FROM interactions ORDER BY timestamp DESC LIMIT ?"
+    params = [limit]
+    
+    if risk_level:
+        query = "SELECT * FROM interactions WHERE risk_level = ? ORDER BY timestamp DESC LIMIT ?"
+        params = [risk_level.upper(), limit]
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        r_dict = dict(row)
+        if isinstance(r_dict.get("symptoms"), str):
+            try:
+                r_dict["symptoms"] = json.loads(r_dict["symptoms"])
+            except Exception:
+                pass
+        elif r_dict.get("symptoms") is None:
+            r_dict["symptoms"] = []
+        result.append(r_dict)
+        
+    return result
+
+
+def _get_assessment_stats_sqlite(db_path: Optional[str] = None) -> Dict[str, Any]:
+    db_path = _resolve_db_path(db_path)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='interactions'
+    """)
+    if not cursor.fetchone():
+        conn.close()
+        return {"total_today": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+        
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_today,
+            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low,
+            SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium,
+            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high,
+            SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical
+        FROM interactions 
+        WHERE date(timestamp) = date('now', 'localtime')
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return {"total_today": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+        
+    return {
+        "total_today": row[0] or 0,
+        "low": row[1] or 0,
+        "medium": row[2] or 0,
+        "high": row[3] or 0,
+        "critical": row[4] or 0
+    }
+
+
+def get_assessments_list(limit: int = 50, risk_level: Optional[str] = None, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve interactions/assessments based on the configured database backend."""
+    # -- Postgres --
+    if _use_postgres() and _PG_AVAILABLE:
+        return _get_assessments_pg(limit, risk_level)
+
+    # -- Supabase --
+    if USE_SUPABASE and _SUPABASE_AVAILABLE:
+        result = _get_assessments_supabase(limit, risk_level)
+        if result is not None:
+            return result
+
+    # -- SQLite fallback --
+    return _get_assessments_sqlite(limit, risk_level, db_path)
+
+
+def get_assessment_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Retrieve interaction statistics based on the configured database backend."""
+    # -- Postgres --
+    if _use_postgres() and _PG_AVAILABLE:
+        return _get_assessment_stats_pg()
+
+    # -- Supabase --
+    if USE_SUPABASE and _SUPABASE_AVAILABLE:
+        result = _get_assessment_stats_supabase()
+        if result is not None:
+            return result
+
+    # -- SQLite fallback --
+    return _get_assessment_stats_sqlite(db_path)
+

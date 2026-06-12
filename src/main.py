@@ -48,7 +48,8 @@ def get_api_key(api_key_header: str = Security(api_key_header)):
 from src.scoring_engine import calculate_score, determine_action, SYMPTOM_WEIGHTS
 from src.database import (
     init_db, log_interaction, get_symptom_repeat_count,
-    add_reminder, get_reminders, delete_reminder, update_reminder_trigger
+    add_reminder, get_reminders, delete_reminder, update_reminder_trigger,
+    get_assessments_list, get_assessment_stats
 )
 from src.notifications import trigger_alerts_if_needed, send_whatsapp_reminder
 
@@ -464,75 +465,16 @@ def list_risk_levels():
 # Dashboard Endpoints
 # ---------------------------------------------------------------------------
 
-from src.database import _resolve_db_path
-
 @app.get("/assessments", tags=["Dashboard"])
 def get_assessments(limit: int = 50, risk_level: Optional[str] = None, api_key: str = Depends(get_api_key)):
     """Returns recent assessments (interactions) for the dashboard feed."""
-    db_path = _resolve_db_path(None)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    # Check if table exists first
-    cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='interactions'
-    """)
-    if not cursor.fetchone():
-        conn.close()
-        return []
-    
-    query = "SELECT * FROM interactions ORDER BY timestamp DESC LIMIT ?"
-    params = [limit]
-    
-    if risk_level:
-        query = "SELECT * FROM interactions WHERE risk_level = ? ORDER BY timestamp DESC LIMIT ?"
-        params = [risk_level.upper(), limit]
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    result = []
-    for row in rows:
-        r_dict = dict(row)
-        try:
-            r_dict["symptoms"] = json.loads(r_dict["symptoms"])
-        except Exception:
-            pass
-        result.append(r_dict)
-        
-    return result
+    return get_assessments_list(limit=limit, risk_level=risk_level)
 
 
 @app.get("/assessments/stats", tags=["Dashboard"])
-def get_assessment_stats(api_key: str = Depends(get_api_key)):
+def get_assessment_stats_endpoint(api_key: str = Depends(get_api_key)):
     """Returns counts for dashboard cards."""
-    db_path = _resolve_db_path(None)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT 
-            COUNT(*) as total_today,
-            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low,
-            SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium,
-            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high,
-            SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical
-        FROM interactions 
-        WHERE date(timestamp) = date('now', 'localtime')
-    """)
-    row = cursor.fetchone()
-    conn.close()
-    
-    return {
-        "total_today": row[0] or 0,
-        "low": row[1] or 0,
-        "medium": row[2] or 0,
-        "high": row[3] or 0,
-        "critical": row[4] or 0
-    }
+    return get_assessment_stats()
 
 
 @app.get("/patients", tags=["Dashboard"])
