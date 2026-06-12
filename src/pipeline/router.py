@@ -29,6 +29,7 @@ if _SRC_DIR not in sys.path:
 
 from scoring_engine import calculate_score, determine_action  # noqa: E402
 from pipeline.conversation import generate_response           # noqa: E402
+from repository import get_symptom_history                    # noqa: E402
 
 
 # ── Result dataclass ─────────────────────────────────────────────────────────
@@ -67,10 +68,13 @@ def _handle_health_issue(payload: Dict[str, Any]) -> Dict[str, Any]:
         The full scoring result dict from :func:`calculate_score` plus
         the recommended escalation action from :func:`determine_action`.
     """
+    history_counts = get_symptom_history(user_id=1, days=3)
+    
     result = calculate_score(
         symptoms=payload["symptoms"],
         severity=payload["severity"],
         confidence=payload.get("confidence", 1.0),
+        history_counts=history_counts
     )
     result["action"] = determine_action(result["score"])
     return result

@@ -8,7 +8,7 @@ for HIGH and CRITICAL risk levels.
 import logging
 from typing import Dict, Any
 import datetime
-from src.database import log_alert
+from src.repository import save_alert
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,11 @@ def send_sms_alert(interaction_id: int, risk_level: str, message: str) -> bool:
     # client.messages.create(body=message, from_=SYSTEM_PHONE, to=CAREGIVER_PHONE)
     
     # Log the alert
-    log_alert(
-        interaction_id=interaction_id,
-        timestamp=datetime.datetime.utcnow().isoformat() + "Z",
-        risk_level=risk_level,
-        notification_type="SMS",
-        status="sent"
+    save_alert(
+        assessment_id=interaction_id,
+        alert_type=risk_level,
+        status="sent",
+        recipient_phone=CAREGIVER_PHONE
     )
     
     return True

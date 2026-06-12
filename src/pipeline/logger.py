@@ -43,6 +43,12 @@ except ImportError:  # allow running standalone
     ValidationResult = Any  # type: ignore[assignment,misc]
     RouteResult = Any  # type: ignore[assignment,misc]
 
+import sys
+_SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+from repository import save_assessment
+
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -142,6 +148,19 @@ def log_request(
         data = route_result.data
         entry["risk_level"] = data.get("risk_level")
         entry["action"] = data.get("action")
+        
+        # Save assessment to Postgres
+        if entry["intent"] == "health_issue":
+            save_assessment(
+                user_id=1,
+                symptoms=entry["symptoms"],
+                risk_level=entry["risk_level"],
+                score=data.get("score"),
+                severity=entry["severity"],
+                confidence=entry["confidence"],
+                action=str(entry["action"].get("action", "")) if isinstance(entry["action"], dict) else str(entry["action"]),
+                message=str(entry["action"].get("message", "")) if isinstance(entry["action"], dict) else ""
+            )
 
     # ── Write JSON line to log file ───────────────────────────────────────────
     try:

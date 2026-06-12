@@ -55,6 +55,10 @@ from pipeline.models import (
     HealthResponse,
 )
 
+from db_session import engine, SessionLocal
+from models import Base, User
+
+
 
 _log = logging.getLogger("wellring.api")
 
@@ -69,6 +73,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     can add 5-15 s of latency to the first request.  Loading them here moves
     that cost to startup time, improving UX for all subsequent callers.
     """
+    # ── Init DB ───────────────────────────────────────────────────────────────
+    try:
+        Base.metadata.create_all(bind=engine)
+        with SessionLocal() as db:
+            if not db.query(User).filter_by(user_id=1).first():
+                dummy_patient = User(name="Dummy Patient", age=75, role="patient", phone="+11234567890", emergency_contact="+10987654321")
+                db.add(dummy_patient)
+                db.commit()
+        _log.info("✅  Database initialized and dummy user verified.")
+    except Exception as exc:
+        _log.warning("⚠️  Database initialization failed: %s", exc)
+
+
     # ── Preload Whisper ───────────────────────────────────────────────────────
     try:
         from whisper_layer.transcriber import preload_model

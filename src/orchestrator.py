@@ -38,6 +38,7 @@ from whisper_layer import record, transcribe, RecordResult, TranscribeResult
 from llama         import classify, ClassifyResult
 from pipeline      import validate, route, log_request
 from tts           import speak, SpeakResult
+from repository    import save_conversation
 
 try:
     from notifier import dispatch as notify_caregiver, NotifyResult
@@ -157,6 +158,10 @@ def run_once(
         )
 
     _log.info("Transcript: '%s'", tr.text[:80])
+    try:
+        save_conversation(user_id=1, message=tr.text, direction="inbound")
+    except Exception as exc:
+        _log.warning("Failed to save inbound conversation: %s", exc)
 
     # ── Stage 3: Classify with Llama ──────────────────────────────────────────
     _log.info("Stage 3 — Classifying with Llama …")
@@ -239,6 +244,11 @@ def run_once(
     # ── Stage 5: TTS — synthesise and speak the response ─────────────────────
     _log.info("Stage 5 — TTS response …")
     spoken_text = _build_response_text(v.payload.get("intent", ""), rr)
+    try:
+        save_conversation(user_id=1, message=spoken_text, direction="outbound")
+    except Exception as exc:
+        _log.warning("Failed to save outbound conversation: %s", exc)
+
     sr = speak(spoken_text, voice_model=voice_model, save_path=tts_save_path)
     if not sr:
         errors["speak"] = sr.error
