@@ -1,15 +1,15 @@
 services:
   - type: web
     name: wellring-backend
-    env: docker
+    runtime: docker
     region: ohio
     plan: free
     branch: atharva-voice-work
     envVars:
       - key: USE_SUPABASE
-        value: false
+        value: "false"
       - key: USE_TWILIO
-        value: false
+        value: "false"
       - key: SUPABASE_URL
         value: ""
       - key: SUPABASE_KEY
