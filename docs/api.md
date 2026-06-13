@@ -71,3 +71,16 @@ Returns a list of all recognized symptoms and their baseline weights.
 `GET /risk-levels`
 
 Returns the criteria and thresholds for LOW, MEDIUM, HIGH, and CRITICAL risk levels.
+
+## Vapi Voice Integration
+
+The WellRing voice assistant is integrated via Vapi. You can speak to the assistant using either:
+
+1. **Web Voice Widget**: Located in the bottom right corner of the dashboard (requires `VITE_VAPI_CLIENT_KEY` and `VITE_VAPI_ASSISTANT_ID` configuration).
+2. **Direct Phone Call**: Dial **`+1 (463) 223-1644`** from any phone.
+
+When a call is made to this number:
+- Vapi routes the call to the **WellRing Nursing Assistant** assistant.
+- The assistant is configured with the `assess_health_risk` tool, pointing to `/assess` endpoint on our deployed backend.
+- Extracted symptoms are evaluated by the backend scoring engine and stored in the database.
+
